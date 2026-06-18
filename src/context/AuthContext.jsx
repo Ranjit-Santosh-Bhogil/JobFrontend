@@ -10,12 +10,31 @@ export function AuthProvider({ children }) {
   const [isLoading, setIsLoading] = useState(true)
 
   const bootstrap = useCallback(async () => {
-    const token = tokenService.getAccessToken()
+    let token = tokenService.getAccessToken()
+    const refreshToken = tokenService.getRefreshToken()
+
     if (!token || isTokenExpired(token)) {
-      tokenService.clearTokens()
-      setUser(null)
-      setIsLoading(false)
-      return
+      if (refreshToken) {
+        try {
+          const { data } = await authApi.refresh(refreshToken)
+          const accessToken = data.accessToken ?? data.token
+          tokenService.setTokens({
+            accessToken,
+            refreshToken: data.refreshToken ?? refreshToken,
+          })
+          token = accessToken
+        } catch {
+          tokenService.clearTokens()
+          setUser(null)
+          setIsLoading(false)
+          return
+        }
+      } else {
+        tokenService.clearTokens()
+        setUser(null)
+        setIsLoading(false)
+        return
+      }
     }
 
     try {

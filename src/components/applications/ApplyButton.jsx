@@ -1,15 +1,45 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { applicationApi } from '@/api/applicationApi'
+import { ROLES } from '@/config/roles'
+import { useAuth } from '@/hooks/useAuth'
+import { hasRole } from '@/utils/roleUtils'
 
 export default function ApplyButton({ jobId, onApplied }) {
+  const { isAuthenticated, user } = useAuth()
   const [coverLetter, setCoverLetter] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [hasApplied, setHasApplied] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const canApply = isAuthenticated && hasRole(user, ROLES.CANDIDATE)
+
+  useEffect(() => {
+    if (!canApply || !jobId) return
+
+    let ignore = false
+    applicationApi
+      .getMyApplications({ size: 100 })
+      .then(({ data }) => {
+        if (ignore) return
+        const applications = data.content ?? data ?? []
+        const alreadyApplied = applications.some((item) => String(item.jobId) === String(jobId))
+        if (alreadyApplied) setHasApplied(true)
+      })
+      .catch(() => {})
+
+    return () => {
+      ignore = true
+    }
+  }, [canApply, jobId])
 
   const handleApply = async (event) => {
     event.preventDefault()
     if (!jobId) return
+    if (!canApply) {
+      setMessage('')
+      setError('Please sign in with a candidate account to apply for jobs.')
+      return
+    }
 
     setIsSubmitting(true)
     setError('')
@@ -19,9 +49,10 @@ export default function ApplyButton({ jobId, onApplied }) {
       const { data } = await applicationApi.apply(jobId, payload)
       setMessage('Application submitted successfully.')
       setCoverLetter('')
+      setHasApplied(true)
       onApplied?.(data)
     } catch (err) {
-      setError(err.message || 'Unable to apply for this job.')
+      setError(getApplyErrorMessage(err))
     } finally {
       setIsSubmitting(false)
     }
@@ -44,11 +75,28 @@ export default function ApplyButton({ jobId, onApplied }) {
       {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
       <button
         type="submit"
-        disabled={isSubmitting}
+        disabled={isSubmitting || hasApplied || !canApply}
         className="mt-4 w-full rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
       >
-        {isSubmitting ? 'Applying...' : 'Apply now'}
+        {getButtonLabel({ isSubmitting, hasApplied, canApply })}
       </button>
     </form>
   )
+}
+
+function getButtonLabel({ isSubmitting, hasApplied, canApply }) {
+  if (isSubmitting) return 'Applying...'
+  if (hasApplied) return 'Applied'
+  if (!canApply) return 'Candidate account required'
+  return 'Apply now'
+}
+
+function getApplyErrorMessage(error) {
+  if (error?.status === 403) {
+    return 'Your current account cannot apply for jobs. Please log in as a candidate and try again.'
+  }
+  if (error?.status === 409) {
+    return 'You have already applied for this job.'
+  }
+  return error?.message || 'Unable to apply for this job.'
 }
